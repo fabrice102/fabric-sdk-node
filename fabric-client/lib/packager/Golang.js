@@ -31,7 +31,15 @@ var logger = utils.getLogger('packager/Golang.js');
 var keep = [
 	'.go',
 	'.c',
-	'.h'
+	'.h',
+	'.cc',
+  	'.cxx',
+	'.cpp',
+  	'.hh',
+  	'.hxx',
+ 	 '.hpp',
+  	'.swig',
+  	'.swigcxx'
 ];
 
 // -------------------------------------------------------------------------
