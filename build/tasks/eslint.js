@@ -1,3 +1,8 @@
+/*
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+*/
 var gulp = require('gulp');
 var eslint = require('gulp-eslint');
 
@@ -7,6 +12,7 @@ gulp.task('lint', function () {
 		'fabric-client/**/*.js',
 		'fabric-ca-client/lib/*.js',
 		'examples/**/*.js',
+		'!examples/balance-transfer/node_modules/**',
 		'!node_modules/**',
 		'!fabric-client/node_modules/**',
 		'!fabric-ca-client/node_modules/**',

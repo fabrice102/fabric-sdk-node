@@ -30,7 +30,7 @@ var MSPM = require('fabric-client/lib/msp/msp-manager.js');
 var idModule = require('fabric-client/lib/msp/identity.js');
 var Identity = idModule.Identity;
 
-var mspProto = grpc.load(path.join(__dirname, '../../fabric-client/lib/protos/msp/mspconfig.proto')).msp;
+var mspProto = grpc.load(path.join(__dirname, '../../fabric-client/lib/protos/msp/msp_config.proto')).msp;
 
 const FABRIC = 0;
 const TEST_CERT_PEM = '-----BEGIN CERTIFICATE-----' +
@@ -55,6 +55,8 @@ const TEST_CERT_PEM = '-----BEGIN CERTIFICATE-----' +
 '-----END CERTIFICATE-----';
 
 test('\n\n** MSP Tests **\n\n', (t) => {
+	testutil.resetDefaults();
+
 	// construct MSP config objects for org0 and org1
 	var configs = [];
 	var mspm = new MSPM();
@@ -125,18 +127,19 @@ test('\n\n** MSP Tests **\n\n', (t) => {
 			}
 		}
 
-		utils.addMSPManager('chain1', mspm);
+		utils.addMSPManager('channel1', mspm);
 		// use the special getter provided by rewire to get access to the module-scoped variable
 		var mspManagers = utils.__get__('mspManagers');
-		t.equal(mspManagers['chain1'] instanceof MSPM, true, 'Checking if an instance of MSP exists under key "chain1"');
+		t.equal(mspManagers['channel1'] instanceof MSPM, true, 'Checking if an instance of MSP exists under key "channel1"');
 
-		t.equal(utils.getMSPManager('chain1'), mspm, 'Testing utils.getMSPManager()');
+		t.equal(utils.getMSPManager('channel1'), mspm, 'Testing utils.getMSPManager()');
 
-		utils.removeMSPManager('chain1');
-		t.equal(typeof mspManagers['chain1'], 'undefined', 'Testing utils.removeMSPManager()');
+		utils.removeMSPManager('channel1');
+		t.equal(typeof mspManagers['channel1'], 'undefined', 'Testing utils.removeMSPManager()');
 
 		// test deserialization using the msp manager
 		var cryptoUtils = utils.newCryptoSuite();
+		cryptoUtils.setCryptoKeyStore(utils.newCryptoKeyStore());
 		var mspImpl = new MSP({
 			rootCerts: [],
 			admins: [],
@@ -145,13 +148,14 @@ test('\n\n** MSP Tests **\n\n', (t) => {
 		});
 
 		var pubKey = cryptoUtils.importKey(TEST_CERT_PEM);
-		var identity = new Identity('testIdentity', TEST_CERT_PEM, pubKey, mspImpl);
+		var identity = new Identity(TEST_CERT_PEM, pubKey, mspImpl.getId(), cryptoUtils);
 
 		var serializedID = identity.serialize();
-
 		return mspm.deserializeIdentity(serializedID);
 	}).then((identity) => {
-		t.equal(identity.getId(), 'SomeDummyValue', 'Deserialized identity using MSP manager');
+		t.equal(identity.getMSPId(), 'peerOrg0', 'Deserialized identity using MSP manager');
+
+		t.equal(mspm.getMSP('peerOrg0').getId(), 'peerOrg0', 'Checking MSPManager getMSP() method' );
 		t.end();
 	}).catch((err) => {
 		t.fail(err.stack ? err.stack : err);

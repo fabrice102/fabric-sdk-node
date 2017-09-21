@@ -20,12 +20,10 @@ var tape = require('tape');
 var _test = require('tape-promise');
 var test = _test(tape);
 
-var hfc = require('fabric-client');
 var testutil = require('./util.js');
 var User = require('fabric-client/lib/User.js');
 var utils = require('fabric-client/lib/utils.js');
 
-var _client = null;
 var memberName = 'Donald T. Duck';
 var enrollmentID = 123454321;
 var roles = ['admin', 'user'];
@@ -33,9 +31,6 @@ var memberCfg = {
 	'enrollmentID': enrollmentID,
 	'roles': roles
 };
-var Client = hfc;
-
-testutil.resetDefaults();
 
 var TEST_CERT_PEM = '-----BEGIN CERTIFICATE-----' +
 'MIIDVDCCAvqgAwIBAgIBATAKBggqhkjOPQQDAjBOMRMwEQYDVQQKDArOoyBBY21l' +
@@ -58,11 +53,14 @@ var TEST_CERT_PEM = '-----BEGIN CERTIFICATE-----' +
 'UWUxIC0CIQDNyHQAwzhw+512meXRwG92GfpzSBssDKLdwlrqiHOu5A==' +
 '-----END CERTIFICATE-----';
 
+module.exports.TEST_CERT_PEM = TEST_CERT_PEM;
+
 test('\n\n ** User - constructor set get tests **\n\n', function (t) {
+	testutil.resetDefaults();
+
 	utils.setConfigSetting('crypto-hsm', false);
 
-	_client = new Client();
-	var member1 = new User(memberName, _client);
+	var member1 = new User(memberName);
 	if (member1.getName() === memberName)
 		t.pass('User constructor set get tests 1: new User getName was successful');
 	else
@@ -118,7 +116,9 @@ test('\n\n ** User - constructor set get tests **\n\n', function (t) {
 	/Invalid parameter. Must have a valid mspId/,
 	'Test invalid enrollment with empty mspId');
 
-	var member2 = new User(memberCfg, _client);
+	var member2 = new User(memberCfg);
+	t.equals(member2.getCryptoSuite(), null, 'User getCryptoSuite should initially be null');
+
 	if (member2.getName() === enrollmentID)
 		t.pass('User constructor test 2: new User cfg getName was successful');
 	else
@@ -133,6 +133,7 @@ test('\n\n ** User - constructor set get tests **\n\n', function (t) {
 
 	// test set enrollment for identity and signing identity
 	var cryptoUtils = utils.newCryptoSuite();
+	cryptoUtils.setCryptoKeyStore(utils.newCryptoKeyStore());
 	cryptoUtils.generateKey()
 	.then(function (key) {
 		// the private key and cert don't match, but it's ok, the code doesn't check

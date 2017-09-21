@@ -17,6 +17,7 @@
 'use strict';
 
 var utils = require('fabric-client/lib/utils.js');
+var util = require('util');
 
 module.exports.registerTxEvent = function(eh, txid, timeout) {
 	return new Promise((resolve, reject) => {
@@ -55,17 +56,15 @@ module.exports.registerCCEvent = function(eh, ccid, enregex, timeout) {
 	});
 };
 
-module.exports.createRequest = function(chain, user, chaincode_id, fcn, args) {
-	var nonce = utils.getNonce();
-	var tx_id = chain.buildTransactionID(nonce, user);
+module.exports.createRequest = function(client, channel, user, chaincode_id, targets, fcn, args) {
+	var tx_id = client.newTransactionID();
 	var request = {
+		targets : targets,
 		chaincodeId: chaincode_id,
 		chaincodeVersion: '',
 		fcn: fcn,
 		args: args,
-		chainId: chain.getName(),
-		txId: tx_id.toString(),
-		nonce: nonce
+		txId: tx_id
 	};
 	return request;
 };
@@ -90,18 +89,17 @@ function checkProposal(results) {
 
 module.exports.checkProposal =  checkProposal;
 
-module.exports.sendTransaction = function(chain, results) {
+module.exports.sendTransaction = function(channel, results) {
 	if (checkProposal(results)) {
 		var proposalResponses = results[0];
 		var proposal = results[1];
-		var header = results[2];
 		var request = {
 			proposalResponses: proposalResponses,
-			proposal: proposal,
-			header: header
+			proposal: proposal
 		};
-		return chain.sendTransaction(request);
+		return channel.sendTransaction(request);
 	} else {
-		return Promise.reject('bad result:' + results);
+		utils.getLogger('eventutil.js').error(util.format('bad result: %j', results));
+		return Promise.reject('Proposal responses returned unsuccessful status');
 	}
 };

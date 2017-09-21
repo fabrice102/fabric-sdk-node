@@ -27,102 +27,47 @@ var _serviceProto = grpc.load(__dirname + '/protos/peer/peer.proto').protos;
 var logger = utils.getLogger('Peer.js');
 
 /**
- * The Peer class represents a peer in the target blockchain network to which
- * HFC sends endorsement proposals, transaction ordering or query requests.
- *
- * The Peer class represents the remote Peer node and its network membership materials,
- * aka the ECert used to verify signatures. Peer membership represents organizations,
- * unlike User membership which represents individuals.
- *
- * When constructed, a Peer instance can be designated as an event source, in which case
- * a “eventSourceUrl” attribute should be configured. This allows the SDK to automatically
- * attach transaction event listeners to the event stream.
- *
- * It should be noted that Peer event streams function at the Peer level and not at the
- * chain and chaincode levels.
+ * The Peer class represents an endorsing peer in the target blockchain network.
+ * The application can send endorsement proposals, and query requests through this
+ * class.
  *
  * @class
+ * @extends Remote
  */
 var Peer = class extends Remote {
 
 	/**
-	 * Constructs a Peer given its endpoint configuration settings.
+	 * Construct a Peer object with the given url and opts. A peer object
+	 * encapsulates the properties of an endorsing peer and the interactions with it
+	 * via the grpc service API. Peer objects are used by the {@link Client} objects to
+	 * send channel-agnostic requests such as installing chaincode, querying peers for
+	 * installed chaincodes, etc. They are also used by the {@link Channel} objects to
+	 * send channel-aware requests such as instantiating chaincodes, and invoking
+	 * transactions.
 	 *
-	 * @param {string} url The URL with format of "grpcs://host:port".
-	 * @param {Object} opts The options for the connection to the peer.
+	 * @param {string} url - The URL with format of "grpc(s)://host:port".
+	 * @param {ConnectionOpts} opts - The options for the connection to the peer.
+	 * @returns {Peer} The Peer instance.
 	 */
 	constructor(url, opts) {
 		super(url, opts);
-		logger.info('Peer.const - url: %s options ',url, this._options);
+
+		logger.debug('Peer.const - url: %s timeout: %s', url, this._request_timeout);
 		this._endorserClient = new _serviceProto.Endorser(this._endpoint.addr, this._endpoint.creds, this._options);
 		this._name = null;
-		this._roles = [];
 	}
 
 	/**
-	 * Since practically all Peers are event producers, when constructing a Peer instance,
-	 * an application can designate it as the event source for the application. Typically
-	 * only one of the Peers on a Chain needs to be the event source, because all Peers on
-	 * the Chain produce the same events. This method tells the SDK which Peer(s) to use as
-	 * the event source for the client application. It is the responsibility of the SDK to
-	 * manage the connection lifecycle to the Peer’s EventHub. It is the responsibility of
-	 * the Client Application to understand and inform the selected Peer as to which event
-	 * types it wants to receive and the call back functions to use.
-	 * @returns {Promise} This gives the app a handle to attach “success” and “error” listeners
-	 */
-	connectEventSource() {
-		//to do
-	}
-
-	/**
-	 * A network call that discovers if at least one listener has been connected to the target
-	 * Peer for a given event. This helps application instance to decide whether it needs to
-	 * connect to the event source in a crash recovery or multiple instance instantiation.
-	 * @param {string} eventName required
-	 * @param {Chain} chain optional
-	 * @result {boolean} Whether the said event has been listened on by some application instance on that chain.
-	 */
-	isEventListened(event, chain) {
-		//to do
-	}
-
-	/**
-	 * For a Peer that is connected to eventSource, the addListener registers an EventCallBack for a
-	 * set of event types. addListener can be invoked multiple times to support differing EventCallBack
-	 * functions receiving different types of events.
-	 *
-	 * Note that the parameters below are optional in certain languages, like Java, that constructs an
-	 * instance of a listener interface, and pass in that instance as the parameter.
-	 * @param {string} eventType : ie. Block, Chaincode, Transaction
-	 * @param  {object} eventTypeData : Object Specific for event type as necessary, currently needed
-	 * for “Chaincode” event type, specifying a matching pattern to the event name set in the chaincode(s)
-	 * being executed on the target Peer, and for “Transaction” event type, specifying the transaction ID
-	 * @param {class} eventCallback Client Application class registering for the callback.
-	 * @returns {string} An ID reference to the event listener.
-	 */
-	addListener(eventType, eventTypeData, eventCallback) {
-		//to do
-	}
-
-	/**
-	 * Unregisters a listener.
-	 * @param {string} eventListenerRef Reference returned by SDK for event listener.
-	 * @return {boolean} Success / Failure status
-	 */
-	removeListener() {
-		//to do
-	}
-
-	/**
-	 * Get the Peer name. Required property for the instance objects.
-	 * @returns {string} The name of the Peer
+	 * Get the Peer name. This is a client-side only identifier for this
+	 * Peer object.
+	 * @returns {string} The name of the Peer object
 	 */
 	getName() {
 		return this._name;
 	}
 
 	/**
-	 * Set the Peer name / id.
+	 * Set the Peer name as a client-side only identifier of this Peer object.
 	 * @param {string} name
 	 */
 	setName(name) {
@@ -130,65 +75,42 @@ var Peer = class extends Remote {
 	}
 
 	/**
-	 * Get the user’s roles the Peer participates in. It’s an array of possible values
-	 * in “client”, and “auditor”. The member service defines two more roles reserved
-	 * for peer membership: “peer” and “validator”, which are not exposed to the applications.
-	 * @returns {string[]} The roles for this user.
-	 */
-	getRoles() {
-		return this._roles();
-	}
-
-	/**
-	 * Set the user’s roles the Peer participates in. See getRoles() for legitimate values.
-	 * @param {string[]} roles The list of roles for the user.
-	 */
-	setRoles(roles) {
-		this._roles = roles;
-	}
-
-	/**
-	 * Returns the Peer's enrollment certificate.
-	 * @returns {object} Certificate in PEM format signed by the trusted CA
-	 */
-	getEnrollmentCertificate() {
-
-	}
-
-    /**
-	 * Set the Peer’s enrollment certificate.
-	 * @param {object} enrollment Certificate in PEM format signed by the trusted CA
-	 */
-	setEnrollmentCertificate(enrollment) {
-		if (typeof enrollment.privateKey === 'undefined' || enrollment.privateKey === null || enrollment.privateKey === '') {
-			throw new Error('Invalid enrollment object. Must have a valid private key.');
-		}
-
-		if (typeof enrollment.certificate === 'undefined' || enrollment.certificate === null || enrollment.certificate === '') {
-			throw new Error('Invalid enrollment object. Must have a valid certificate.');
-		}
-
-		this._enrollment = enrollment;
-	}
-
-	/**
-	 * Send an endorsement proposal to an endorser.
+	 * Send an endorsement proposal to an endorser. This is used to call an
+	 * endorsing peer to execute a chaincode to process a transaction proposal,
+	 * or runs queries.
 	 *
-	 * @param {Proposal} proposal A proposal of type Proposal
-	 * @see /protos/peer/fabric_proposal.proto
-	 * @returns Promise for a ProposalResponse
+	 * @param {Proposal} proposal - A protobuf encoded byte array of type
+	 *                              [Proposal]{@link https://github.com/hyperledger/fabric/blob/v1.0.0/protos/peer/proposal.proto#L134}
+	 * @param {Number} timeout - A number indicating milliseconds to wait on the
+	 *                              response before rejecting the promise with a
+	 *                              timeout error. This overrides the default timeout
+	 *                              of the Peer instance and the global timeout in the config settings.
+	 * @returns {Promise} A Promise for a {@link ProposalResponse}
 	 */
-	sendProposal(proposal) {
+	sendProposal(proposal, timeout) {
 		logger.debug('Peer.sendProposal - Start');
-		var self = this;
+		let self = this;
+		let rto = self._request_timeout;
+		if (typeof timeout === 'number')
+			rto = timeout;
+
+		if(!proposal) {
+			return Promise.reject(new Error('Missing proposal to send to peer'));
+		}
 
 		// Send the transaction to the peer node via grpc
 		// The rpc specification on the peer side is:
 		//     rpc ProcessProposal(Proposal) returns (ProposalResponse) {}
 		return new Promise(function(resolve, reject) {
+			var send_timeout = setTimeout(function(){
+				logger.error('sendProposal - timed out after:%s', rto);
+				return reject(new Error('REQUEST_TIMEOUT'));
+			}, rto);
+
 			self._endorserClient.processProposal(proposal, function(err, proposalResponse) {
+				clearTimeout(send_timeout);
 				if (err) {
-					logger.error('GRPC client got an error response from the peer "%s". %s', self._url, err.stack ? err.stack : err);
+					logger.debug('Received proposal response from: %s status: %s',self._url, err);
 					if(err instanceof Error) {
 						reject(err);
 					}
@@ -209,8 +131,8 @@ var Peer = class extends Remote {
 	}
 
 	/**
-	* return a printable representation of this object
-	*/
+	 * return a printable representation of this object
+	 */
 	toString() {
 		return ' Peer : {' +
 			'url:' + this._url +

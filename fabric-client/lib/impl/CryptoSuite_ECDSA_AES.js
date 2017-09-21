@@ -27,13 +27,10 @@ var KEYUTIL = jsrsa.KEYUTIL;
 var util = require('util');
 var BN = require('bn.js');
 var Signature = require('elliptic/lib/elliptic/ec/signature.js');
-var path = require('path');
-const os = require('os');
 
 var hashPrimitives = require('../hash.js');
 var utils = require('../utils');
 var ECDSAKey = require('./ecdsa/key.js');
-var CKS = require('./CryptoKeyStore.js');
 
 var logger = utils.getLogger('crypto_ecdsa_aes');
 
@@ -42,6 +39,7 @@ var logger = utils.getLogger('crypto_ecdsa_aes');
  * This class implements a software-based key generation (as opposed to Hardware Security Module based key management)
  *
  * @class
+ * @extends module:api.CryptoSuite
  */
 var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 
@@ -49,51 +47,38 @@ var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 	 * constructor
 	 *
 	 * @param {number} keySize Key size for the ECDSA algorithm, can only be 256 or 384
-	 * @param {object} opts Implementation-specific options object for the {@link KeyValueStore} class to instantiate an instance
-	 * @param {string} KVSImplClass Optional. The built-in key store saves private keys. The key store may be backed by different
-	 * {@link KeyValueStore} implementations. If specified, the value of the argument must point to a module implementing the
-	 * KeyValueStore interface.
 	 * @param {string} hash Optional. Hash algorithm, supported values are "SHA2" and "SHA3"
 	 */
-	constructor(keySize, opts, KVSImplClass, hash) {
+	constructor(keySize, hash) {
+		logger.debug('constructor, keySize: '+keySize);
 		super();
 
 		if (keySize !== 256 && keySize !== 384) {
 			throw new Error('Illegal key size: ' + keySize + ' - this crypto suite only supports key sizes 256 or 384');
 		}
-
 		if (typeof hash === 'string' && hash !== null && hash !== '') {
 			this._hashAlgo = hash;
 		} else {
 			this._hashAlgo = utils.getConfigSetting('crypto-hash-algo');
 		}
-
-		if (typeof opts === 'undefined' || opts === null) {
-			opts = {
-				path: CryptoSuite_ECDSA_AES.getDefaultKeyStorePath()
-			};
-		}
-
-		var superClass;
-
-		if (typeof KVSImplClass !== 'undefined' && KVSImplClass !== null) {
-			if (typeof KVSImplClass !== 'function') {
-				throw new Error('Super class for the key store must be a module.');
-			} else {
-				superClass = KVSImplClass;
-			}
-		} else {
-			// no super class specified, use the default key value store implementation
-			superClass = require(utils.getConfigSetting('key-value-store'));
-		}
-
 		this._keySize = keySize;
-		this._store = null;
-		this._storeConfig = {
-			superClass: superClass,
-			opts: opts
-		};
+		this._cryptoKeyStore = null;
+
 		this._initialize();
+
+	}
+
+	/**
+	 * Set the cryptoKeyStore.
+	 *
+	 * When the application needs to use a key store other than the default,
+	 * it should use the {@link Client} newCryptoKeyStore to create an instance and
+	 * use this function to set the instance on the CryptoSuite.
+	 *
+	 * @param {CryptoKeyStore} cryptoKeyStore The cryptoKeyStore.
+	 */
+	setCryptoKeyStore(cryptoKeyStore) {
+		this._cryptoKeyStore = cryptoKeyStore;
 	}
 
 	_initialize() {
@@ -136,25 +121,22 @@ var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 		this._ecdsa = new EC(this._ecdsaCurve);
 	}
 
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#generateKey}
-	 * Returns an instance of {@link module.api.Key} representing the private key, which also
-	 * encapsulates the public key. It'll also save the private key in the KeyValueStore
-	 *
-	 * @returns {Key} Promise of an instance of {@link module:ECDSA_KEY} containing the private key and the public key
-	 */
 	generateKey(opts) {
 		var pair = KEYUTIL.generateKeypair('EC', this._curveName);
 
 		if (typeof opts !== 'undefined' && typeof opts.ephemeral !== 'undefined' && opts.ephemeral === true) {
+			logger.debug('generateKey, ephemeral true, Promise resolved');
 			return Promise.resolve(new ECDSAKey(pair.prvKeyObj));
 		} else {
+			if (!this._cryptoKeyStore) {
+				throw new Error('generateKey opts.ephemeral is false, which requires CryptoKeyStore to be set.');
+			}
 			// unless "opts.ephemeral" is explicitly set to "true", default to saving the key
 			var key = new ECDSAKey(pair.prvKeyObj);
 
 			var self = this;
 			return new Promise((resolve, reject) => {
-				self._getKeyStore()
+				self._cryptoKeyStore._getKeyStore()
 				.then ((store) => {
 					logger.debug('generateKey, store.setValue');
 					return store.putKey(key)
@@ -164,121 +146,112 @@ var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 							reject(err);
 						});
 				});
+
 			});
 		}
 	}
 
 	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#deriveKey}
 	 * To be implemented
 	 */
 	deriveKey(key, opts) {
 		throw new Error('Not implemented yet');
 	}
 
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#importKey}
-	 */
 	importKey(raw, opts) {
+		logger.debug('importKey - start');
+		var store_key = true; //default
+		if (typeof opts !== 'undefined' && typeof opts.ephemeral !== 'undefined' && opts.ephemeral === true) {
+			store_key = false;
+		}
+		if (!!store_key && !this._cryptoKeyStore) {
+			throw new Error('importKey opts.ephemeral is false, which requires CryptoKeyStore to be set.');
+		}
+
 		var self = this;
-		return new Promise((resolve, reject) => {
-			// attempt to import the raw content, assuming it's one of the following:
-			// X.509v1/v3 PEM certificate (RSA/DSA/ECC)
-			// PKCS#8 PEM RSA/DSA/ECC public key
-			// PKCS#5 plain PEM DSA/RSA private key
-			// PKCS#8 plain PEM RSA/ECDSA private key
-			// TODO: add support for the following passcode-protected PEM formats
-			// - PKCS#5 encrypted PEM RSA/DSA private
-			// - PKCS#8 encrypted PEM RSA/ECDSA private key
-			var pemString = Buffer.from(raw).toString();
-			try {
-				var key = KEYUTIL.getKey(pemString);
+		// attempt to import the raw content, assuming it's one of the following:
+		// X.509v1/v3 PEM certificate (RSA/DSA/ECC)
+		// PKCS#8 PEM RSA/DSA/ECC public key
+		// PKCS#5 plain PEM DSA/RSA private key
+		// PKCS#8 plain PEM RSA/ECDSA private key
+		// TODO: add support for the following passcode-protected PEM formats
+		// - PKCS#5 encrypted PEM RSA/DSA private
+		// - PKCS#8 encrypted PEM RSA/ECDSA private key
+		var pemString = Buffer.from(raw).toString();
+		pemString = makeRealPem(pemString);
+		var key = null;
+		var theKey = null;
+		var error = null;
+		try {
+			key = KEYUTIL.getKey(pemString);
+		} catch(err) {
+			error = new Error('Failed to parse key from PEM: ' + err);
+		}
 
-				if (key.type && key.type === 'EC') {
-					// save the key in the key store
-					var theKey = new ECDSAKey(key);
+		if (key && key.type && key.type === 'EC') {
+			theKey = new ECDSAKey(key);
+			logger.debug('importKey - have the key %j',theKey);
+		}
+		else {
+			error = new Error('Does not understand PEM contents other than ECDSA private keys and certificates');
+		}
 
-					return self._getKeyStore()
-						.then ((store) => {
-							return store.putKey(theKey);
-						}).then(() => {
-							return resolve(theKey);
-						}).catch((err) => {
-							reject(err);
-						});
-				} else {
-					// TODO PEM encoded RSA public keys
-					reject(new Error('Does not understand certificates other than ECDSA public keys'));
-				}
-			} catch(err) {
-				logger.error('Failed to parse key from PEM: ' + err);
-				reject(err);
+		if(!store_key) {
+			if(error) {
+				logger.error('importKey - %s',error);
+				throw error;
 			}
-		});
+			return theKey;
+		}
+		else {
+			if(error) {
+				logger.error('importKey - %j',error);
+				return Promise.reject(error);
+			}
+			return new Promise((resolve, reject) => {
+				return self._cryptoKeyStore._getKeyStore()
+					.then ((store) => {
+						return store.putKey(theKey);
+					}).then(() => {
+						return resolve(theKey);
+					}).catch((err) => {
+						reject(err);
+					});
+
+			});
+		}
 	}
 
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#getKey}
-	 * Returns the key this CSP associates to the Subject Key Identifier ski.
-	 */
 	getKey(ski) {
 		var self = this;
 		var store;
 
+		if (!self._cryptoKeyStore) {
+			throw new Error('getKey requires CryptoKeyStore to be set.');
+		}
 		return new Promise((resolve, reject) => {
-			self._getKeyStore()
+			self._cryptoKeyStore._getKeyStore()
 			.then ((st) => {
 				store = st;
 				return store.getKey(ski);
 			}).then((key) => {
-				if (key instanceof ECDSAKey)
+				if (ECDSAKey.isInstance(key))
 					return resolve(key);
 
 				if (key !== null) {
 					var pubKey = KEYUTIL.getKey(key);
-					return resolve(new ECDSAKey(pubKey));
-				}
+					return resolve(new ECDSAKey(pubKey));				}
 			}).catch((err) => {
 				reject(err);
 			});
+
 		});
 	}
 
-	_getKeyStore() {
-		var self = this;
-		return new Promise((resolve, reject) => {
-			if (self._store === null) {
-				logger.info(util.format('This class requires a CryptoKeyStore to save keys, using the store: %j', self._storeConfig));
-
-				CKS(self._storeConfig.superClass, self._storeConfig.opts)
-				.then((ks) => {
-					logger.debug('_getKeyStore returning ks');
-					self._store = ks;
-					return resolve(self._store);
-				}).catch((err) => {
-					reject(err);
-				});
-			} else {
-				logger.debug('_getKeyStore resolving store');
-				return resolve(self._store);
-			}
-		});
-	}
-
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#hash}
-	 * Hashes messages msg using options opts.
-	 */
 	hash(msg, opts) {
 		return this._hashFunction(msg);
 	}
 
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#sign}
-	 * Signs digest using key k.
-	 *
-	 * The opts argument is not needed.
-	 */
 	sign(key, digest, opts) {
 		if (typeof key === 'undefined' || key === null) {
 			throw new Error('A valid key is required to sign');
@@ -297,11 +270,6 @@ var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 		return sig.toDER();
 	}
 
-	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#verify}
-	 * Verifies signature against key k and digest
-	 * The opts argument should be appropriate for the algorithm used.
-	 */
 	verify(key, signature, digest) {
 		if (typeof key === 'undefined' || key === null) {
 			throw new Error('A valid key is required to verify');
@@ -326,25 +294,17 @@ var CryptoSuite_ECDSA_AES = class extends api.CryptoSuite {
 	}
 
 	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#encrypt}
-	 * Encrypts plaintext using key k.
-	 * The opts argument should be appropriate for the algorithm used.
+	 * To be implemented.
 	 */
 	encrypt(key, plaintext, opts) {
 		throw new Error('Not implemented yet');
 	}
 
 	/**
-	 * This is an implementation of {@link module:api.CryptoSuite#decrypt}
-	 * Decrypts ciphertext using key k.
-	 * The opts argument should be appropriate for the algorithm used.
+	 * To be implemented.
 	 */
 	decrypt(key, cipherText, opts) {
 		throw new Error('Not implemented yet');
-	}
-
-	static getDefaultKeyStorePath() {
-		return path.join(os.homedir(), '.hfc-key-store');
 	}
 };
 
@@ -401,5 +361,42 @@ function _checkMalleability(sig, curveParams) {
 
 	return true;
 }
+
+// Utilitly method to make sure the start and end markers are correct
+function makeRealPem(pem) {
+	var result = null;
+	if(typeof pem == 'string') {
+		result = pem.replace(/-----BEGIN -----/, '-----BEGIN CERTIFICATE-----');
+		result = result.replace(/-----END -----/, '-----END CERTIFICATE-----');
+		result = result.replace(/-----([^-]+) ECDSA ([^-]+)-----([^-]*)-----([^-]+) ECDSA ([^-]+)-----/, '-----$1 EC $2-----$3-----$4 EC $5-----');
+	}
+	return result;
+}
+
+
+/*
+ * Convert a PEM encoded certificate to DER format
+ * @param {string) pem PEM encoded public or private key
+ * @returns {string} hex Hex-encoded DER bytes
+ * @throws Will throw an error if the conversation fails
+ */
+function pemToDER(pem) {
+
+	//PEM format is essentially a nicely formatted base64 representation of DER encoding
+	//So we need to strip "BEGIN" / "END" header/footer and string line breaks
+	//Then we simply base64 decode it and convert to hex string
+	var contents = pem.toString().trim().split(/\r?\n/);
+	//check for BEGIN and END tags
+	if (!(contents[0].match(/\-\-\-\-\-\s*BEGIN ?([^-]+)?\-\-\-\-\-/) &&
+		contents[contents.length - 1].match(/\-\-\-\-\-\s*END ?([^-]+)?\-\-\-\-\-/))) {
+		throw new Error('Input parameter does not appear to be PEM-encoded.');
+	};
+	contents.shift(); //remove BEGIN
+	contents.pop(); //remove END
+	//base64 decode and encode as hex string
+	var hex = Buffer.from(contents.join(''), 'base64').toString('hex');
+	return hex;
+}
+
 
 module.exports = CryptoSuite_ECDSA_AES;

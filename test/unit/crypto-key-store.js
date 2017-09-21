@@ -16,20 +16,23 @@
 
 'use strict';
 
+if (global && global.hfc) global.hfc.config = undefined;
+require('nconf').reset();
+
 var tape = require('tape');
 var _test = require('tape-promise');
 var test = _test(tape);
 
+var util = require('util');
 var testutil = require('./util.js');
 var utils = require('fabric-client/lib/utils.js');
 var fs = require('fs-extra');
 var path = require('path');
+var os = require('os');
 var jsrsa = require('jsrsasign');
 var KEYUTIL = jsrsa.KEYUTIL;
 var CouchdbMock = require('mock-couch');
 var nano = require('nano');
-
-testutil.resetDefaults();
 
 var ecdsaKey = require('fabric-client/lib/impl/ecdsa/key.js');
 var CKS = require('fabric-client/lib/impl/CryptoKeyStore.js');
@@ -64,6 +67,10 @@ var f2 = KEYUTIL.getKey(TEST_KEY_PRIVATE_CERT_PEM);
 var testPubKey = new ecdsaKey(f2);
 
 test('\n\n** CryptoKeyStore tests **\n\n', function(t) {
+	testutil.resetDefaults();
+
+	var keystorePath = path.join(testutil.getTempDir(), 'crypto-key-store');
+
 	t.throws(
 		() => {
 			CKS();
@@ -81,14 +88,14 @@ test('\n\n** CryptoKeyStore tests **\n\n', function(t) {
 	);
 
 	var store;
-	CKS({path: '/tmp/hfc-cks'})
+	CKS({path: keystorePath})
 	.then((st) => {
 		store = st;
 		return store.putKey(testPrivKey);
 	}).then((keyPEM) => {
 		t.pass('Successfully saved private key in store');
 
-		t.equal(fs.existsSync(path.join('/tmp/hfc-cks', testPrivKey.getSKI() + '-priv')), true,
+		t.equal(fs.existsSync(path.join(keystorePath, testPrivKey.getSKI() + '-priv')), true,
 			'Check that the private key has been saved with the proper <SKI>-priv index');
 
 		return store.getKey(testPrivKey.getSKI());
@@ -98,7 +105,7 @@ test('\n\n** CryptoKeyStore tests **\n\n', function(t) {
 
 		return store.putKey(testPubKey);
 	}).then((keyPEM) => {
-		t.equal(fs.existsSync(path.join('/tmp/hfc-cks', testPrivKey.getSKI() + '-pub')), true,
+		t.equal(fs.existsSync(path.join(keystorePath, testPrivKey.getSKI() + '-pub')), true,
 			'Check that the public key has been saved with the proper <SKI>-pub index');
 
 		return store.getKey(testPubKey.getSKI());
@@ -107,7 +114,7 @@ test('\n\n** CryptoKeyStore tests **\n\n', function(t) {
 		t.equal(recoveredKey.isPrivate(), true, 'Test if the recovered key is a private key');
 
 		// delete the private key entry and test if getKey() would return the public key
-		fs.unlinkSync(path.join('/tmp/hfc-cks', testPrivKey.getSKI() + '-priv'));
+		fs.unlinkSync(path.join(keystorePath, testPrivKey.getSKI() + '-priv'));
 		return store.getKey(testPubKey.getSKI());
 	}).then((recoveredKey) => {
 		t.notEqual(recoveredKey, null, 'Successfully read public key from store using SKI');
@@ -220,7 +227,6 @@ function testKeyStore(store, t) {
 		return new Promise((resolve, reject) => {
 			dbclient.use(dbname).destroy(testPrivKey.getSKI() + '-priv', docRev, function(err, body) {
 				if (!err) {
-					t.comment('Successfully deleted entry for private key');
 					return resolve(store.getKey(testPubKey.getSKI()));
 				} else {
 					t.fail('Failed to delete private key in couchdb. ' + err.stack ? err.stack : err);
@@ -232,4 +238,53 @@ function testKeyStore(store, t) {
 		t.notEqual(recoveredKey, null, 'Successfully read public key from store using SKI');
 		t.equal(recoveredKey.isPrivate(), false, 'Test if the recovered key is a public key');
 	});
-}
+};
+
+test('\n\n** CryptoKeyStore tests - newCryptoKeyStore tests **\n\n', function(t) {
+	utils.setConfigSetting('key-value-store', 'fabric-ca-client/lib/impl/FileKeyValueStore.js');//force for 'gulp test'
+	let keyValStorePath = 'tmp/keyValStore1';
+	let config = { path: keyValStorePath };
+	let cs = utils.newCryptoKeyStore(config);
+	t.equal(cs._storeConfig.opts, config, util.format('Returned instance should have store config opts of %j', config));
+	t.equal(typeof cs._storeConfig.superClass, 'function', 'Returned instance should have store config superClass');
+
+	let defaultKVSPath = path.join(os.homedir(), '.hfc-key-store');
+	cs = utils.newCryptoKeyStore();
+	t.equal(cs._storeConfig.opts.path, defaultKVSPath, util.format('Returned instance should have store config opts.path of %s', defaultKVSPath));
+	t.equal(typeof cs._storeConfig.superClass, 'function', 'Returned instance should have store config superClass');
+
+	let kvsImplClass = require(utils.getConfigSetting('key-value-store'));
+	cs = utils.newCryptoKeyStore(kvsImplClass);
+	t.equal(cs._storeConfig.opts.path, defaultKVSPath, util.format('Returned instance should have store config opts.path of %s', defaultKVSPath));
+	t.equal(typeof cs._storeConfig.superClass, 'function', 'Returned instance should have store config superClass');
+
+	kvsImplClass = require(utils.getConfigSetting('key-value-store'));
+	cs = utils.newCryptoKeyStore(kvsImplClass, config);
+	t.equal(cs._storeConfig.opts, config, util.format('Returned instance should have store config opts of %j', config));
+	t.equal(typeof cs._storeConfig.superClass, 'function', 'Returned instance should have store config superClass');
+
+	t.end();
+});
+
+test('\n\n** CryptoKeyStore tests - getKey error tests **\n\n', function(t) {
+	// override t.end function so it'll always clear the config settings
+	t.end = ((context, f) => {
+		return function() {
+			if (global && global.hfc) global.hfc.config = undefined;
+			require('nconf').reset();
+
+			f.apply(context, arguments);
+		};
+	})(t, t.end);
+
+	var cryptoSuite = utils.newCryptoSuite();
+	t.throws(
+		() => {
+			cryptoSuite.getKey('blah');
+		},
+		/getKey requires CryptoKeyStore to be set./,
+		'Test missing cryptoKeyStore: cryptoSuite.getKey'
+	);
+	t.end();
+
+});

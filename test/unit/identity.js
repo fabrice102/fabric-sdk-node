@@ -26,8 +26,6 @@ var api = require('fabric-client/lib/api.js');
 var fs = require('fs');
 var path = require('path');
 
-testutil.resetDefaults();
-
 var jsrsa = require('jsrsasign');
 var KEYUTIL = jsrsa.KEYUTIL;
 var idModule = require('fabric-client/lib/msp/identity.js');
@@ -81,17 +79,11 @@ var TEST_KEY_PRIVATE_CERT_PEM = '-----BEGIN CERTIFICATE-----' +
 '-----END CERTIFICATE-----';
 
 test('\n\n ** Identity class tests **\n\n', function (t) {
-	t.throws(
-		function() {
-			new Identity();
-		},
-		/Missing required parameter "id"/,
-		'Checking required input parameters'
-	);
+	testutil.resetDefaults();
 
 	t.throws(
 		function() {
-			new Identity('id');
+			new Identity();
 		},
 		/Missing required parameter "certificate"/,
 		'Checking required input parameters'
@@ -99,7 +91,7 @@ test('\n\n ** Identity class tests **\n\n', function (t) {
 
 	t.throws(
 		function() {
-			new Identity('id', 'cert');
+			new Identity('cert');
 		},
 		/Missing required parameter "publicKey"/,
 		'Checking required input parameters'
@@ -107,9 +99,9 @@ test('\n\n ** Identity class tests **\n\n', function (t) {
 
 	t.throws(
 		function() {
-			new Identity('id', 'cert', 'pubKey');
+			new Identity('cert', 'pubKey');
 		},
-		/Missing required parameter "msp"/,
+		/Missing required parameter "mspId"/,
 		'Checking required input parameters'
 	);
 
@@ -165,21 +157,13 @@ test('\n\n ** Identity class tests **\n\n', function (t) {
 		function() {
 			new SigningIdentity();
 		},
-		/Missing required parameter "id"/,
-		'Checking required input parameters'
-	);
-
-	t.throws(
-		function() {
-			new SigningIdentity('id');
-		},
 		/Missing required parameter "certificate"/,
 		'Checking required input parameters'
 	);
 
 	t.throws(
 		function() {
-			new SigningIdentity('id', 'cert');
+			new SigningIdentity('cert');
 		},
 		/Missing required parameter "publicKey"/,
 		'Checking required input parameters'
@@ -187,33 +171,39 @@ test('\n\n ** Identity class tests **\n\n', function (t) {
 
 	t.throws(
 		function() {
-			new SigningIdentity('id', 'cert', 'pubKey');
+			new SigningIdentity('cert', 'pubKey');
 		},
-		/Missing required parameter "msp"/,
+		/Missing required parameter "mspId"/,
 		'Checking required input parameters'
 	);
 
 	t.throws(
 		function() {
-			new SigningIdentity('id', 'cert', 'pubKey', 'msp');
+			new SigningIdentity('cert', 'pubKey', 'mspId', 'cryptoSuite');
 		},
 		/Missing required parameter "signer"/,
 		'Checking required input parameters'
 	);
+
+	var cryptoUtils = utils.newCryptoSuite();
+	cryptoUtils.setCryptoKeyStore(utils.newCryptoKeyStore());
 
 	// test identity serialization and deserialization
 	var mspImpl = new MSP({
 		rootCerts: [],
 		admins: [],
 		id: 'testMSP',
-		cryptoSuite: utils.newCryptoSuite()
+		cryptoSuite: cryptoUtils
 	});
 
-	var cryptoUtils = utils.newCryptoSuite();
 	var pubKey = cryptoUtils.importKey(TEST_CERT_PEM, { algorithm: api.CryptoAlgorithms.X509Certificate });
-	var identity = new Identity('testIdentity', TEST_CERT_PEM, pubKey, mspImpl);
+	var identity = new Identity(TEST_CERT_PEM, pubKey, mspImpl.getId(), cryptoUtils);
 
 	var serializedID = identity.serialize();
+	// deserializeIdentity should work both ways ... with promise and without
+	var identity_g = mspImpl.deserializeIdentity(serializedID, false);
+	t.equals(identity_g.getMSPId(),'testMSP', 'deserializeIdentity call without promise');
+
 	mspImpl.deserializeIdentity(serializedID)
 	.then((dsID) => {
 		t.equal(dsID._certificate, TEST_CERT_PEM, 'Identity class function tests: deserialized certificate');
@@ -228,7 +218,7 @@ test('\n\n ** Identity class tests **\n\n', function (t) {
 		var signer = new Signer(cryptoUtils, testKey);
 		t.equal(signer.getPublicKey().isPrivate(), false, 'Test Signer class getPublicKey() method');
 
-		var signingID = new SigningIdentity('testSigningIdentity', TEST_KEY_PRIVATE_CERT_PEM, pubKey, mspImpl, signer);
+		var signingID = new SigningIdentity(TEST_KEY_PRIVATE_CERT_PEM, pubKey, mspImpl.getId(), cryptoUtils, signer);
 
 		t.throws(
 			() => {

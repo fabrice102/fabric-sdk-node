@@ -34,7 +34,7 @@ var Remote = class {
 	 * Constructs an object with the endpoint configuration settings.
 	 *
 	 * @param {string} url The orderer URL with format of 'grpc(s)://host:port'.
-	 * @param {object} opts An Object that may contain options to pass to grpcs calls
+	 * @param {Object} opts An Object that may contain options to pass to grpcs calls
 	 * <br>- pem {string} The certificate file, in PEM format,
 	 *    to use with the gRPC protocol (that is, with TransportCredentials).
 	 *    Required when using the grpcs protocol.
@@ -76,9 +76,32 @@ var Remote = class {
 			}
 		}
 
+		let grpc_receive_max = utils.getConfigSetting('grpc-max-receive-message-length');
+		let grpc_send_max = utils.getConfigSetting('grpc-max-send-message-length');
+		// if greater than 0, set to that specific limit
+		// if equal to -1, set to that to have no limit
+		// if 0, do not set anything to use the system default
+		if (grpc_receive_max > 0 || grpc_receive_max === -1)
+			this._options['grpc.max_receive_message_length'] = grpc_receive_max;
+
+		// if greater than 0, set to that specific limit
+		// if equal to -1, set to that to have no limit
+		// if 0, do not set anything to use the system default
+		if (grpc_send_max > 0 || grpc_send_max === -1)
+			this._options['grpc.max_send_message_length'] = grpc_send_max;
+
 		// service connection
 		this._url = url;
 		this._endpoint = new Endpoint(url, pem);
+
+		// node.js based timeout
+		this._request_timeout = 30000;
+		if(opts && opts['request-timeout']) {
+			this._request_timeout = opts['request-timeout'];
+		}
+		else {
+			this._request_timeout = utils.getConfigSetting('request-timeout',30000); //default 30 seconds
+		}
 	}
 
 	/**
@@ -86,7 +109,7 @@ var Remote = class {
 	 * @returns {string} Get the URL associated with the Orderer.
 	 */
 	getUrl() {
-		logger.debug('Remote.getUrl::'+this._url);
+		logger.debug('getUrl::'+this._url);
 		return this._url;
 	}
 

@@ -28,8 +28,8 @@ var idModule = require('./identity.js');
 var SigningIdentity = idModule.SigningIdentity;
 var Signer = idModule.Signer;
 
-var mspProto = grpc.load(path.join(__dirname, '../protos/msp/mspconfig.proto')).msp;
-var identityProto = grpc.load(path.join(__dirname, '../protos/identity.proto')).msp;
+var mspProto = grpc.load(path.join(__dirname, '../protos/msp/msp_config.proto')).msp;
+var identityProto = grpc.load(path.join(__dirname, '../protos/msp/identities.proto')).msp;
 
 /**
  * MSPManager is an interface defining a manager of one or more MSPs. This essentially acts
@@ -79,6 +79,7 @@ var MSPManager = class {
 			// TODO: for now using application-scope defaults but crypto parameters like key size, hash family
 			// and digital signature algorithm should be from the config itself
 			var cs = utils.newCryptoSuite();
+			cs.setCryptoKeyStore(utils.newCryptoKeyStore());
 
 			// get the application org names
 			var orgs = [];
@@ -99,8 +100,32 @@ var MSPManager = class {
 				cryptoSuite: cs
 			});
 			logger.debug('loadMSPs - found msp=',newMSP.getId());
+			//will eliminate duplicates
 			self._msps[fabricConfig.getName()] = newMSP;
 		});
+	}
+
+	/**
+	 * Create and add MSP instance to this manager according to configuration information
+	 * @param {Object} config A configuration object specific to the implementation. For this
+	 * implementation it uses the following fields:
+	 *		<br>`rootCerts`: array of {@link Identity} representing trust anchors for validating
+	 *           signing certificates. Required for MSPs used in verifying signatures
+	 *		<br>`intermediateCerts`: array of {@link Identity} representing trust anchors for validating
+	 *           signing certificates. optional for MSPs used in verifying signatures
+	 *		<br>`admins`: array of {@link Identity} representing admin privileges
+	 *		<br>`signer`: {@link SigningIdentity} signing identity. Required for MSPs used in signing
+	 *		<br>`id`: {string} value for the identifier of this instance
+	 *		<br>`orgs`: {string} array of organizational unit identifiers
+	 *		<br>`cryptoSuite': the underlying {@link module:api.CryptoSuite} for crypto primitive operations
+	 *@return {MSP} The newly created MSP instance
+	 */
+	addMSP(config) {
+		if(!config.cryptoSuite) config.cryptoSuite = utils.newCryptoSuite();
+		var msp = new MSP(config);
+		logger.debug('addMSP - msp=',msp.getId());
+		this._msps[msp.getId()] = msp;
+		return msp;
 	}
 
 	/**
@@ -108,6 +133,13 @@ var MSPManager = class {
 	 */
 	getMSPs() {
 		return this._msps;
+	}
+
+	/**
+	 * Returns a validating MSP
+	 */
+	getMSP(id) {
+		return this._msps[id];
 	}
 
 	/**

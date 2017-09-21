@@ -42,12 +42,13 @@ var keyValStorePath = testUtil.KVS;
 //
 
 test('orderer bad address test', function(t) {
+	testUtil.resetDefaults();
+
 	try {
 		var client = new Orderer('xxxxx');
 		t.fail('Orderer allowed setting a bad URL.');
 	}
 	catch(err) {
-		console.log('Caught Error: ' + err);
 		t.pass('Orderer did not allow setting bad URL.');
 	}
 	t.end();
@@ -66,7 +67,6 @@ test('orderer missing address test', function(t) {
 		t.fail('Orderer allowed setting a missing address.');
 	}
 	catch(err) {
-		console.log('Caught Error: ' + err);
 		t.pass('Orderer did not allow setting a missing address.');
 	}
 	t.end();
@@ -85,12 +85,36 @@ test('orderer missing data test', function(t) {
 	client.sendBroadcast()
 	.then(
 		function(status) {
-			console.log('response status: ' + JSON.stringify(status));
 			t.fail('Should have noticed missing data.');
 			t.end();
 		},
 		function(err) {
-			console.log('Caught Error: ' + err);
+			t.pass('Successfully found missing data: ' + err);
+			t.end();
+		}
+	).catch(function(err) {
+		t.fail('Caught Error: should not be here if we defined promise error function: ' + err);
+		t.end();
+	});
+});
+
+//
+//Orderer missing data test
+//
+//Send an empty deliver message to an orderer. An error indicating that no
+//data was sent is expected in this case.
+//
+
+test('orderer missing data deliver test', function(t) {
+	var client = new Orderer('grpc://127.0.0.1:5005');
+
+	client.sendDeliver()
+	.then(
+		function(status) {
+			t.fail('Should have noticed missing data.');
+			t.end();
+		},
+		function(err) {
 			t.pass('Successfully found missing data: ' + err);
 			t.end();
 		}
@@ -103,8 +127,35 @@ test('orderer missing data test', function(t) {
 //
 // Orderer unknown address  test
 //
-// Send a broadcast message to a bad orderer address. An error indicating
+// Send a deliver message to a bad orderer address. An error indicating
 // a connection failure is expected in this case.
+//
+
+test('orderer unknown address test', function(t) {
+	var client = new Orderer('grpc://127.0.0.1:51006');
+
+	client.sendDeliver('some data')
+	.then(
+		function(status) {
+			t.fail('Should have noticed a bad deliver address.');
+			t.end();
+		},
+		function(err) {
+			t.pass('Successfully found bad deliver address!');
+			t.end();
+		}
+	).catch(function(err) {
+		t.fail('Caught Error: should not be here if we defined promise error function: '
+		+ err);
+		t.end();
+	});
+});
+
+//
+//Orderer unknown address  test
+//
+//Send a broadcast message to a bad orderer address. An error indicating
+//a connection failure is expected in this case.
 //
 
 test('orderer unknown address test', function(t) {
@@ -113,7 +164,6 @@ test('orderer unknown address test', function(t) {
 	client.sendBroadcast('some data')
 	.then(
 		function(status) {
-			console.log('response status: ' + JSON.stringify(status));
 			t.fail('Should have noticed a bad address.');
 			t.end();
 		},

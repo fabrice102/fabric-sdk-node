@@ -20,7 +20,7 @@ var jsrsasign = require('jsrsasign');
 var KEYUTIL = jsrsasign.KEYUTIL;
 
 var api = require('../api.js');
-var utils = require('../utils');
+var utils = require('../utils.js');
 var ECDSAKey = require('./ecdsa/key.js');
 
 var logger = utils.getLogger('CryptoKeyStore.js');
@@ -52,7 +52,7 @@ var CryptoKeyStoreMixin = (KeyValueStore) => class extends KeyValueStore {
 			// next try the public key entry
 			return self.getValue(_getKeyIndex(ski, false));
 		}).then((key) => {
-			if (key instanceof ECDSAKey)
+			if (ECDSAKey.isInstance(key))
 				return key;
 
 			if (key !== null) {
@@ -72,10 +72,17 @@ var CryptoKeyStoreMixin = (KeyValueStore) => class extends KeyValueStore {
 	}
 };
 
-/*
- * The main API for this module. Returns an instance of the CryptoKeyStore that uses the
- * api.KeyValueStore implementation class 'KVSImplClass' under the cover to persist keys.
- * 'opts' is specific to the implementation 'KVSImplClass'
+/**
+ * A CryptoKeyStore uses an underlying instance of {@link module:api.KeyValueStore} implementation
+ * to persist crypto keys.
+ *
+ * @param {function} KVSImplClass Optional. The built-in key store saves private keys.
+ *    The key store may be backed by different {@link KeyValueStore} implementations.
+ *    If specified, the value of the argument must point to a module implementing the
+ *    KeyValueStore interface.
+ * @param {Object} opts Implementation-specific option object used in the constructor
+ *
+ * @class
  */
 var CryptoKeyStore = function(KVSImplClass, opts) {
 	var superClass;

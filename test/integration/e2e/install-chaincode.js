@@ -18,142 +18,36 @@
 // in a happy-path scenario
 'use strict';
 
+var utils = require('fabric-client/lib/utils.js');
+var logger = utils.getLogger('E2E install-chaincode');
+
 var tape = require('tape');
 var _test = require('tape-promise');
 var test = _test(tape);
 
-var path = require('path');
-var fs = require('fs');
-var util = require('util');
-
-var hfc = require('fabric-client');
-var utils = require('fabric-client/lib/utils.js');
-var Peer = require('fabric-client/lib/Peer.js');
-var Orderer = require('fabric-client/lib/Orderer.js');
+var e2eUtils = require('./e2eUtils.js');
 var testUtil = require('../../unit/util.js');
 
-var logger = utils.getLogger('install-chaincode');
-
-var e2e = testUtil.END2END;
-hfc.addConfigFile(path.join(__dirname, './config.json'));
-var ORGS = hfc.getConfigSetting('test-network');
-
-var tx_id = null;
-var nonce = null;
-var the_user = null;
-
-testUtil.setupChaincodeDeploy();
-
 test('\n\n***** End-to-end flow: chaincode install *****\n\n', (t) => {
-	installChaincode('org1', t)
+	testUtil.setupChaincodeDeploy();
+
+	e2eUtils.installChaincode('org1', testUtil.CHAINCODE_PATH, 'v0', t, true)
 	.then(() => {
 		t.pass('Successfully installed chaincode in peers of organization "org1"');
-		return installChaincode('org2', t);
+		return e2eUtils.installChaincode('org2', testUtil.CHAINCODE_PATH, 'v0', t, true);
 	}, (err) => {
 		t.fail('Failed to install chaincode in peers of organization "org1". ' + err.stack ? err.stack : err);
-		t.end();
+		logger.error('Failed to install chaincode in peers of organization "org1". ');
+		return e2eUtils.installChaincode('org2', testUtil.CHAINCODE_PATH, 'v0', t, true);
 	}).then(() => {
 		t.pass('Successfully installed chaincode in peers of organization "org2"');
 		t.end();
 	}, (err) => {
 		t.fail('Failed to install chaincode in peers of organization "org2". ' + err.stack ? err.stack : err);
+		logger.error('Failed to install chaincode in peers of organization "org2". ');
 		t.end();
 	}).catch((err) => {
 		t.fail('Test failed due to unexpected reasons. ' + err.stack ? err.stack : err);
 		t.end();
 	});
 });
-
-function installChaincode(org, t) {
-	var client = new hfc();
-	var chain = client.newChain(testUtil.END2END.channel);
-
-	var caRootsPath = ORGS.orderer.tls_cacerts;
-	let data = fs.readFileSync(path.join(__dirname, caRootsPath));
-	let caroots = Buffer.from(data).toString();
-
-	chain.addOrderer(
-		new Orderer(
-			ORGS.orderer.url,
-			{
-				'pem': caroots,
-				'ssl-target-name-override': ORGS.orderer['server-hostname']
-			}
-		)
-	);
-
-	var orgName = ORGS[org].name;
-
-	var targets = [];
-	for (let key in ORGS[org]) {
-		if (ORGS[org].hasOwnProperty(key)) {
-			if (key.indexOf('peer') === 0) {
-				let data = fs.readFileSync(path.join(__dirname, ORGS[org][key]['tls_cacerts']));
-				let peer = new Peer(
-					ORGS[org][key].requests,
-					{
-						pem: Buffer.from(data).toString(),
-						'ssl-target-name-override': ORGS[org][key]['server-hostname']
-					}
-				);
-
-				targets.push(peer);
-				chain.addPeer(peer);
-			}
-		}
-	}
-
-	return hfc.newDefaultKeyValueStore({
-		path: testUtil.storePathForOrg(orgName)
-	}).then((store) => {
-		client.setStateStore(store);
-		return testUtil.getSubmitter(client, t, org);
-	}).then((admin) => {
-		t.pass('Successfully enrolled user \'admin\'');
-		the_user = admin;
-
-		nonce = utils.getNonce();
-		tx_id = chain.buildTransactionID(nonce, the_user);
-
-		// send proposal to endorser
-		var request = {
-			targets: targets,
-			chaincodePath: testUtil.CHAINCODE_PATH,
-			chaincodeId: e2e.chaincodeId,
-			chaincodeVersion: e2e.chaincodeVersion,
-			txId: tx_id,
-			nonce: nonce
-		};
-
-		return chain.sendInstallProposal(request);
-	},
-	(err) => {
-		t.fail('Failed to enroll user \'admin\'. ' + err);
-		throw new Error('Failed to enroll user \'admin\'. ' + err);
-	}).then((results) => {
-		var proposalResponses = results[0];
-
-		var proposal = results[1];
-		var header   = results[2];
-		var all_good = true;
-		for(var i in proposalResponses) {
-			let one_good = false;
-			if (proposalResponses && proposalResponses[0].response && proposalResponses[0].response.status === 200) {
-				one_good = true;
-				logger.info('install proposal was good');
-			} else {
-				logger.error('install proposal was bad');
-			}
-			all_good = all_good & one_good;
-		}
-		if (all_good) {
-			t.pass(util.format('Successfully sent install Proposal and received ProposalResponse: Status - %s', proposalResponses[0].response.status));
-		} else {
-			t.fail('Failed to send install Proposal or receive valid response. Response null or status is not 200. exiting...');
-		}
-	},
-	(err) => {
-		t.fail('Failed to send install proposal due to error: ' + err.stack ? err.stack : err);
-		throw new Error('Failed to send install proposal due to error: ' + err.stack ? err.stack : err);
-	});
-}

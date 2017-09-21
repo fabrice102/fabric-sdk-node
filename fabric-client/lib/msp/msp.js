@@ -1,3 +1,8 @@
+/*
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+*/
 'use strict';
 
 var api = require('../api.js');
@@ -8,7 +13,9 @@ var utils = require('../utils.js');
 var logger = utils.getLogger('msp.js');
 
 var grpc = require('grpc');
-var identityProto = grpc.load(__dirname + '/../protos/identity.proto').msp;
+var identityProto = grpc.load(__dirname + '/../protos/msp/identities.proto').msp;
+var _mspConfigProto = grpc.load(__dirname + '/../protos/msp/msp_config.proto').msp;
+
 
 /**
  * MSP is the minimal Membership Service Provider Interface to be implemented
@@ -45,7 +52,7 @@ var MSP = class {
 
 		if (typeof config.signer !== 'undefined') {
 			// when constructing local msp, a signer property is required and it must be an instance of SigningIdentity
-			if (!(config.signer instanceof SigningIdentity)) {
+			if (!(SigningIdentity.isInstance(config.signer))) {
 				throw new Error('Parameter "signer" must be an instance of SigningIdentity');
 			}
 		}
@@ -101,20 +108,59 @@ var MSP = class {
 	}
 
 	/**
-	 * DeserializeIdentity deserializes an identity
-	 * @param {byte[]} serializedIdentity A protobuf-based serialization of an object with
-	 * two fields: mspid and idBytes for certificate PEM bytes
-	 * @returns {Promise} Promise for an {@link Identity} instance
+	 * Returns the Protobuf representation of this MSP Config
 	 */
-	deserializeIdentity(serializedIdentity) {
+	toProtobuf() {
+		var proto_msp_config = new _mspConfigProto.MSPConfig();
+		proto_msp_config.setType(0); //FABRIC
+		var proto_fabric_msp_config = new _mspConfigProto.FabricMSPConfig();
+		proto_fabric_msp_config.setName(this._id);
+		proto_fabric_msp_config.setRootCerts(this._rootCerts);
+		if(this._intermediateCerts) {
+			proto_fabric_msp_config.setIntermediateCerts(this._intermediateCerts);
+		}
+		if(this._admins) {
+			proto_fabric_msp_config.setAdmins(this._admins);
+		}
+		if(this._organization_units) {
+			//organizational_unit_identifiers
+			proto_fabric_msp_config.setOrganizationalUnitIdentifiers(this._organization_units);
+		}
+		proto_msp_config.setConfig(proto_fabric_msp_config.toBuffer());
+		return proto_msp_config;
+	}
+
+	/**
+	 * DeserializeIdentity deserializes an identity
+	 * @param {byte[]} serializedIdentity - A protobuf-based serialization of an object with
+	 * 	      two fields: mspid and idBytes for certificate PEM bytes
+	 * @param {boolean} storeKey - if the user should be stored in the key store. Only when
+	 *        false will a promise not be returned
+	 * @returns {Promise} Promise for an {@link Identity} instance or
+	 *           or the Identity object itself if "storeKey" argument is false
+	 */
+	deserializeIdentity(serializedIdentity, storeKey) {
+		logger.debug('importKey - start');
+		var store_key = true; //default
+		// if storing is not required and therefore a promise will not be returned
+		// then storeKey must be set to false;
+		if(typeof storeKey === 'boolean') {
+			store_key = storeKey;
+		}
 		var sid = identityProto.SerializedIdentity.decode(serializedIdentity);
-		var cert = sid.IdBytes.toBinary();
+		var cert = sid.getIdBytes().toBinary();
 		logger.debug('Encoded cert from deserialized identity: %s', cert);
-		return this.cryptoSuite.importKey(cert, { algorithm: api.CryptoAlgorithms.X509Certificate })
-		.then((publicKey) => {
-			// TODO: the id of the new Identity instance should probably be derived from the subject info in the cert?
-			return new Identity('SomeDummyValue', cert, publicKey, this);
-		});
+		if(!store_key) {
+			var publicKey =this.cryptoSuite.importKey(cert, { algorithm: api.CryptoAlgorithms.X509Certificate, ephemeral: true });
+			var sdk_identity = new Identity(cert, publicKey, this.getId(), this.cryptoSuite);
+			return sdk_identity;
+		}
+		else {
+			return this.cryptoSuite.importKey(cert, { algorithm: api.CryptoAlgorithms.X509Certificate })
+			.then((publicKey) => {
+				return new Identity(cert, publicKey, this.getId(), this.cryptoSuite);
+			});
+		}
 	}
 
 	/**
@@ -125,6 +171,7 @@ var MSP = class {
 	validate(id) {
 		return true;
 	}
+
 };
 
 module.exports = MSP;
