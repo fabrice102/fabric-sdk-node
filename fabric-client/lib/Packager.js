@@ -63,7 +63,17 @@ module.exports.package = function(chaincodePath, chaincodeType, devmode, metadat
 			let keep = [
 				'.go',
 				'.c',
-				'.h'
+				'.h',
+				// The following extensions are used for SWIG
+				// (not present in the official non-swig branch of fabric-sdk-node)
+				'.cc',
+				'.cxx',
+			  	'.cpp',
+				'.hh',
+				'.hxx',
+				'.hpp',
+				'.swig',
+				'.swigcxx'
 			];
 			handler = new Golang(keep);
 		}
